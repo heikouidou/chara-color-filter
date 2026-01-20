@@ -1,28 +1,32 @@
 import { extension_settings, getContext, loadExtensionSettings } from "../../../extensions.js";
-
 import { saveSettingsDebounced, this_chid } from "../../../../script.js";
 
 const extensionName = "chara-color-filter";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
-const extensionSettings = extension_settings[extensionName];
 const defaultSettings = {};
 
 // ==========================================
-// 🎨 設定 & グローバル変数
+// 🎨 Settings & Global Variables
 // ==========================================
 let currentGlobalColor = { r: 0, g: 0, b: 0 };
 let updateTimer = null;
-let isBgDirty = true; // 初回実行用フラグ
+let isBgDirty = true; // Flag for initial execution
 let windowHeight = 0;
 let canvasFit = $('canvas').css('object-fit');
-let charaId = undefined;
+let charaId = undefined; // To track character changes
+
+// Initialize Settings
 loadSettings();
 
 // ==========================================
-// 🛠️ 画像処理関数
+// 🛠️ Image Processing Functions
 // ==========================================
 
-// 1. 画像URLから平均色を取得
+/**
+ * 1. Get Average Color from Image URL
+ * @param {string} imgUrl 
+ * @returns {Promise<{r: number, g: number, b: number}>}
+ */
 async function getAverageColorFromUrl(imgUrl) {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -45,73 +49,72 @@ async function getAverageColorFromUrl(imgUrl) {
     });
 }
 
-// 2. フィルター(Canvas)の生成と適用
+/**
+ * 2. Generate and Apply Filter (Canvas)
+ * @param {object} color - {r, g, b}
+ * @param {HTMLElement} targetElement - Specific image element (optional)
+ * @param {string} objectFit - CSS object-fit property
+ * @param {string} blendMode - CSS mix-blend-mode property
+ */
 const makeCharaFilter = async (color, targetElement = null, objectFit = 'contain', blendMode = 'None') => {
-    // ターゲット特定：引数優先 > 末っ子画像 > ID指定
+    // Target identification: Argument > Last child image > ID
     const targetImg = targetElement || document.querySelector('.expression-holder img:last-child') || document.getElementById('expression-image');
 
     if (!targetImg) return;
 
-    // 既存のフィルター削除（掃除）
+    // Cleanup existing filter
     $(targetImg.parentNode).find('.expression-filter-canvas').remove();
 
     const canvas = document.createElement('canvas');
-    canvas.classList.add('expression-filter-canvas'); // 識別用クラス
+    canvas.classList.add('expression-filter-canvas'); // Class for identification
 
-    // 本体のスタイルをカンニング
+    // Copy computed styles from the target image
     const computedStyle = window.getComputedStyle(targetImg);
-;
-    // Canvas設定
-    if (blendMode == 'None' || blendMode == undefined){
+
+    // Common CSS styles
+    const cssStyles = {
+        'position': 'absolute',
+        'z-index': 2147483647, // Bring to front
+        'top': 0,
+        'left': 0,
+        'pointer-events': 'none',
+        'width': '100%',
+        'height': '100%',
+        'max-height': computedStyle.maxHeight,
+        'max-width': computedStyle.maxWidth,
+        'object-fit': objectFit,
+        'object-position': computedStyle.objectPosition,
+        'visibility': 'visible'
+    };
+
+    // Apply Blend Mode settings
+    if (blendMode === 'None' || blendMode === undefined) {
         $(canvas).css({
+            ...cssStyles,
             'mix-blend-mode': 'normal',
-            'opacity': 0,
-            'position': 'absolute',
-            'z-index': 2147483647, // 最前面へ
-            'top': 0,
-            'left': 0,
-            'pointer-events': 'none',
-            'width': '100%',
-            'height': '100%',
-            // 本体の表示設定をコピー
-            'max-height': computedStyle.maxHeight,
-            'max-width': computedStyle.maxWidth,
-            'object-fit': objectFit,
-            'object-position': computedStyle.objectPosition,
-            'visibility': 'visible'
+            'opacity': 0
+        });
+    } else {
+        $(canvas).css({
+            ...cssStyles,
+            'mix-blend-mode': blendMode,
+            'opacity': 0.7
         });
     }
-    else {
-        $(canvas).css({
-            'mix-blend-mode': blendMode,
-            'opacity': 0.7,
-            'position': 'absolute',
-            'z-index': 2147483647, // 最前面へ
-            'top': 0,
-            'left': 0,
-            'pointer-events': 'none',
-            'width': '100%',
-            'height': '100%',
-            // 本体の表示設定をコピー
-            'max-height': computedStyle.maxHeight,
-            'max-width': computedStyle.maxWidth,
-            'object-fit': objectFit,
-            'object-position': computedStyle.objectPosition,
-            'visibility': 'visible'
-        })
-    }
+
+    // Save settings
     extension_settings[extensionName].blend_mode_setting = blendMode;
-    console.log('setting:' + extension_settings[extensionName].blend_mode_setting);
     saveSettingsDebounced();
-    // 親要素に追加
+
+    // Append to parent
     targetImg.parentNode.appendChild(canvas);
 
-    // 描画処理
+    // Drawing process
     const ctx = canvas.getContext('2d');
     canvas.width = targetImg.naturalWidth || 600;
     canvas.height = targetImg.naturalHeight || 900;
 
-    // シルエット作成 & 塗りつぶし
+    // Create Silhouette & Fill
     ctx.globalCompositeOperation = 'source-over';
     ctx.drawImage(targetImg, 0, 0, canvas.width, canvas.height);
     ctx.globalCompositeOperation = 'source-in';
@@ -119,7 +122,11 @@ const makeCharaFilter = async (color, targetElement = null, objectFit = 'contain
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
-// 3. 画像ロード待機（イベントリスナー式）
+/**
+ * 3. Wait for Image Load (Event Listener approach)
+ * @param {HTMLElement} imgNode 
+ * @param {number} timeout 
+ */
 function waitForImageLoad(imgNode, timeout = 5000) {
     return new Promise((resolve) => {
         if (!imgNode || imgNode.tagName !== 'IMG') return resolve(false);
@@ -145,25 +152,28 @@ function waitForImageLoad(imgNode, timeout = 5000) {
 }
 
 // ==========================================
-// ⚡️ 実行制御（司令塔）
+// ⚡️ Execution Control (Main Logic)
 // ==========================================
 async function processFilter(targetImgNode) {
-    // 背景色更新
+    // Update Background Color if dirty
     if (isBgDirty) {
         const targetBg = document.getElementById('bg1');
         if (targetBg) {
             const bgStyle = targetBg.style.backgroundImage;
             if (bgStyle && bgStyle !== 'none') {
+                // Extract URL from style string
                 const imgUrl = bgStyle.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
                 try {
                     currentGlobalColor = await getAverageColorFromUrl(imgUrl);
                     isBgDirty = false;
-                } catch (e) { console.error("背景色取得エラー", e); }
+                } catch (e) { 
+                    console.error("[CharaColorFilter] Background color fetch error:", e); 
+                }
             }
         }
     }
 
-    // フィルター適用
+    // Apply Filter
     if (targetImgNode) {
         const isReady = await waitForImageLoad(targetImgNode);
         if (isReady) {
@@ -173,7 +183,7 @@ async function processFilter(targetImgNode) {
     }
 }
 
-// デバウンス処理
+// Debounce Function
 function triggerDebounce(node) {
     if (updateTimer) clearTimeout(updateTimer);
     updateTimer = setTimeout(() => {
@@ -183,38 +193,24 @@ function triggerDebounce(node) {
 }
 
 // ==========================================
-// 👁️ 監視設定（Observer）
+// 👁️ Observers
 // ==========================================
 
-// 1. 立ち絵監視（クローン検知）
+// 1. Character Sprite Observer (Detects clones and changes)
 const cloneObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
         if (mutation.type === 'childList') {
-
-            // ホーム画面に遷移したらフィルターも消す
-            const watchTarget = { id: this_chid };
-            function watchValue(obj, prop, func) {
-                let value = obj[prop];
-                Object.defineProperty(obj, prop, {
-                    get: () => value,
-                    set: newValue => {
-                        const oldValue = value;
-                        value = newValue;
-                        func(oldValue, newValue);
-                    },
-                    configurable: true
-                })
-            };
-            function isCharaChange(){
-                if(this_chid != charaId){
-                    if(this_chid == undefined){
-                        $(".expression-filter-canvas").css('visibility', 'hidden');
-                    }
-                    charaId = this_chid;
+            
+            // Detect Character Change or Home Screen Transition
+            if (this_chid !== charaId) {
+                // If returned to Home Screen (undefined), hide the filter
+                if (this_chid === undefined) {
+                    $(".expression-filter-canvas").css('visibility', 'hidden');
                 }
+                charaId = this_chid;
             }
-            Object.getOwnPropertyNames(watchTarget).forEach(prop => watchValue(watchTarget, prop, isCharaChange()));
-            // 立ち絵自体の変更、出現の監視
+
+            // Monitor sprite addition/changes
             mutation.addedNodes.forEach(node => {
                 if (node.tagName === 'IMG' && node.classList.contains('expression')) {
                     triggerDebounce(node);
@@ -224,21 +220,21 @@ const cloneObserver = new MutationObserver((mutations) => {
     }
 });
 
-// 2. 背景監視（ID指定）
+// 2. Background Observer (Watches for style changes on bg1)
 const bgObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
         if (mutation.attributeName === 'style') {
             isBgDirty = true;
-            // 今表示されている最新の画像に対して適用
+            // Apply to the current image
             const currentImg = document.getElementById('expression-image');
-            // もしIDで見つからなければクローンを探す保険
+            // Fallback to querySelector if ID not found
             const target = currentImg || document.querySelector('.expression-holder img:last-child');
             if (target) triggerDebounce(target);
         }
     }
 });
 
-// 監視スタート
+// Start Observing
 cloneObserver.observe(document.body, { childList: true, subtree: true });
 
 const bgElement = document.getElementById('bg1');
@@ -246,44 +242,43 @@ if (bgElement) {
     bgObserver.observe(bgElement, { attributes: true, attributeFilter: ['style'] });
 }
 
-// 初回実行（リロード時用）
+// Initial Run (For page reload)
 const initialImg = document.querySelector('.expression-holder img:last-child');
 if (initialImg) triggerDebounce(initialImg);
 
-console.log("✅ SillyTavern Expression Filter Loaded");
+console.log("✅ Chara Color Filter Loaded");
 
-// 画面サイズや回転、ソフトキーボードの開閉で立ち絵のobject-fitが変わるため、それに合わせる
+// Handle resize & virtual keyboard events (Adjust object-fit)
 window.addEventListener('resize', function() {
-    // 現在の表示可能領域の高さを取得
     const height = window.innerHeight;
     if(windowHeight != height){
        canvasFit = $('#expression-image').css('object-fit');
        makeCharaFilter(currentGlobalColor, null, canvasFit, extension_settings[extensionName].blend_mode_setting);
+       windowHeight = height; // Update last height
     }
 });
 
-
-
+// Load Settings logic
 async function loadSettings() {
-  //Create the settings if they don't exist
     extension_settings[extensionName] = extension_settings[extensionName] || {};
     if (Object.keys(extension_settings[extensionName]).length === 0) {
         Object.assign(extension_settings[extensionName], defaultSettings);
     }
-    console.log('previousSetting:' + extension_settings[extensionName].blend_mode_setting);
-  // Updating settings in the UI
+    
+    // Update UI if exists
     $("#chara-color-filter-blend-mode").val(extension_settings[extensionName].blend_mode_setting).trigger("change");
 }
 
-// This function is called when the extension is loaded
+// Initialize on Load
 jQuery(async () => {
     const settingsHtml = await $.get(`${extensionFolderPath}/ccf_setting.html`);
     $("#extensions_settings").append(settingsHtml);
 
-  // 設定メニューでブレンドモードが変わったとき
+    // Event Listener for Blend Mode Dropdown
     let blendMode = $('#chara-color-filter-blend-mode');
     blendMode.on('change', function() {
         makeCharaFilter(currentGlobalColor, null, canvasFit, blendMode.find('option:selected').text());
     });
-  loadSettings();
+    
+    loadSettings();
 });
