@@ -1,0 +1,13 @@
+/* All style elements for your extension go here */
+@media screen and (max-width: 1000px) {
+    body.waifuMode canvas.expression-filter-canvas{
+        object-fit: cover;
+    }
+}
+@media screen and (max-width: 1000px) and (orientation: landsc
+ape) {
+    body.waifuMode canvas.expression-filter-canva {
+        object-fit: contain;
+    }
+}
+
